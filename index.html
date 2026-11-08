@@ -352,47 +352,50 @@ const foldShapes = [
   { name:'京劇臉譜', sym:true, art:mask() },
   { name:'禁止駛入', sym:true, art:noEntry() },
   { name:'燈籠', sym:true, art:lantern() },
-  { name:'窗花剪紙', sym:true, art:paperCut() },
-  { name:'考考你', sym:false, art:trickSign() }
+  { name:'窗花剪紙', sym:true, art:paperCut() }
 ];
-let foldIdx = 0, foldAngle = 0;
+let foldIdx = 0, foldAngle = 0, foldMode = 'v', foldTimer = null;
 const foldAnim = makeAnimator();
 const foldSvg = $('#foldSvg');
+const MODES = {
+  v: { keep:'-10,-10 200,-10 200,410 -10,410', move:'200,-10 410,-10 410,410 200,410', phi:0 },
+  d: { keep:'-10,-10 -10,410 410,410', move:'-10,-10 410,-10 410,410', phi:-45 },
+  a: { keep:'-10,-10 410,-10 -10,410', move:'410,-10 410,410 -10,410', phi:45 }
+};
 
 function buildFoldPick(){
   $('#foldPick').innerHTML = foldShapes.map((s, i) =>
     `<button aria-pressed="${i === foldIdx}" data-i="${i}"><svg viewBox="0 0 400 400" aria-hidden="true">${s.art}</svg>${s.name}</button>`).join('');
   $('#foldPick').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-    foldIdx = +b.dataset.i; foldAnim.stop(); buildFoldPick(); buildFold(); setFold(0);
+    foldIdx = +b.dataset.i; foldAnim.stop(); clearTimeout(foldTimer); foldMode = 'v'; buildFoldPick(); buildFold(); setFold(0); playIdle();
   }));
 }
 
 function buildFold(){
-  const s = foldShapes[foldIdx];
+  const s = foldShapes[foldIdx], M = MODES[foldMode];
+  const diag = (x1, y1, x2, y2, on) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#fff" stroke-width="9" stroke-dasharray="10 8" opacity="${on ? 1 : .35}"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#2F5BD3" stroke-width="4" stroke-dasharray="10 8" opacity="${on ? 1 : .35}"/>`;
   foldSvg.innerHTML = `
     <defs>
-      <clipPath id="clipL"><rect x="-10" y="-10" width="210" height="420"/></clipPath>
-      <clipPath id="clipR"><rect x="200" y="-10" width="210" height="420"/></clipPath>
+      <clipPath id="clipL"><polygon points="${M.keep}"/></clipPath>
+      <clipPath id="clipR"><polygon points="${M.move}"/></clipPath>
     </defs>
     <g clip-path="url(#clipL)">${s.art}</g>
     <g id="flap"><g clip-path="url(#clipR)">${s.art}</g></g>
-    <g id="answerAxes" style="display:none">
-      <line x1="60" y1="60" x2="340" y2="340" stroke="#2F5BD3" stroke-width="4" stroke-dasharray="10 8"/>
-      <line x1="340" y1="60" x2="60" y2="340" stroke="#2F5BD3" stroke-width="4" stroke-dasharray="10 8"/>
-    </g>
-    <line id="foldAxis" x1="200" y1="6" x2="200" y2="396" stroke="#D43A2F" stroke-width="3" stroke-dasharray="9 7"/>
-    <text x="210" y="24" font-size="15" font-weight="700" fill="#D43A2F">${s.sym ? '對稱軸' : '摺線'}</text>`;
+    ${foldMode === 'v'
+      ? `<line x1="200" y1="6" x2="200" y2="396" stroke="#D43A2F" stroke-width="3" stroke-dasharray="9 7"/><text x="210" y="24" font-size="15" font-weight="700" fill="#D43A2F">${s.sym ? '對稱軸' : '摺線'}</text>`
+      : diag(40, 40, 360, 360, true) + diag(360, 40, 40, 360, true)}`;
 }
 
-function setFold(a){
+function setFold(a, quiet){
   foldAngle = a;
-  const c = Math.cos(a * Math.PI / 180);
+  const c = Math.cos(a * Math.PI / 180).toFixed(4), phi = MODES[foldMode].phi;
   const flap = $('#flap');
-  flap.setAttribute('transform', `translate(200 0) scale(${c.toFixed(4)} 1) translate(-200 0)`);
+  flap.setAttribute('transform', `translate(200 200) rotate(${phi}) scale(${c} 1) rotate(${-phi}) translate(-200 -200)`);
   flap.setAttribute('opacity', (1 - .35 * a / 180).toFixed(3));
   $('#foldRange').value = Math.round(a);
   $('#foldVal').textContent = Math.round(a) + '°';
   $('#foldReadout').textContent = '翻摺角度 ' + Math.round(a) + '°';
+  if (quiet) return;
   const s = foldShapes[foldIdx], msg = $('#foldMsg');
   if (a >= 179.5) {
     if (s.sym) {
@@ -401,13 +404,7 @@ function setFold(a){
     } else {
       msg.className = 'msg bad';
       msg.innerHTML = `兩邊對不上！斜線翻過去後方向不同，不能完全重合，所以這條直的摺線<b>不是</b>對稱軸。想一想：這個標誌的對稱軸應該在哪裏？<br><button class="btn" id="showAns">看答案</button>`;
-      $('#showAns').addEventListener('click', () => {
-        $('#answerAxes').style.display = '';
-        $('#foldAxis').style.display = 'none';
-        foldAnim.run(foldAngle, 0, 700, setFoldQuiet);
-        msg.className = 'msg ok';
-        msg.innerHTML = '答案：沿著斜線對摺，或者沿和斜線垂直的藍色虛線對摺，兩邊都能完全重合。這個標誌有 2 條對稱軸。';
-      });
+      $('#showAns').addEventListener('click', showAnswer);
     }
   } else if (a > 0) {
     msg.className = 'msg';
@@ -419,22 +416,22 @@ function setFold(a){
       : '考考你：沿這條直的虛線對摺，兩邊能完全重合嗎？先猜一猜，再按「播放」驗證。';
   }
 }
-function setFoldQuiet(a){
-  foldAngle = a;
-  const c = Math.cos(a * Math.PI / 180);
-  $('#flap').setAttribute('transform', `translate(200 0) scale(${c.toFixed(4)} 1) translate(-200 0)`);
-  $('#flap').setAttribute('opacity', (1 - .35 * a / 180).toFixed(3));
-  $('#foldRange').value = Math.round(a);
-  $('#foldVal').textContent = Math.round(a) + '°';
-  $('#foldReadout').textContent = '翻摺角度 ' + Math.round(a) + '°';
+
+function showAnswer(){
+  const msg = $('#foldMsg');
+  foldAnim.stop(); clearTimeout(foldTimer);
+  foldMode = 'd'; buildFold(); setFold(0, true);
+  msg.className = 'msg ok';
+  msg.innerHTML = '答案：沿著斜線對摺，或者沿和斜線垂直的藍色虛線對摺，兩邊都能完全重合。這個標誌有 2 條對稱軸。';
+  playIdle();
 }
 
-$('#foldRange').addEventListener('input', e => { foldAnim.stop(); resetAnswer(); setFold(+e.target.value); playIdle(); });
-function resetAnswer(){ const g = $('#answerAxes'); if (g) { g.style.display = 'none'; $('#foldAxis').style.display = ''; } }
+function resetAnswer(){ clearTimeout(foldTimer); if (foldMode !== 'v') { foldMode = 'v'; buildFold(); } }
 function playIdle(){ const b = $('#foldPlay'); b.disabled = false; b.textContent = '▶ 播放'; }
+$('#foldRange').addEventListener('input', e => { foldAnim.stop(); resetAnswer(); setFold(+e.target.value); playIdle(); });
 $('#foldPlay').addEventListener('click', () => {
   resetAnswer();
-  const from = foldAngle >= 179.5 ? 0 : foldAngle;
+  const from = foldAngle >= 179.5 || foldMode !== 'v' ? 0 : foldAngle;
   const b = $('#foldPlay'); b.disabled = true; b.textContent = '播放中…';
   foldAnim.run(from, 180, 2200 * (180 - from) / 180 + 200, setFold, playIdle);
 });
